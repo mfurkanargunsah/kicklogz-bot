@@ -68,6 +68,28 @@ Site URL'in: https://PROJE_ID.web.app
 
 ---
 
+## ADIM 6 — Dinamik Kanal Yönetimi (Yeni!)
+
+Artık botu yeniden başlatmadan kanal ekleyip çıkarabilirsin:
+1. Firebase Console → **Firestore Database**
+2. `bot_config` adında bir koleksiyon oluştur.
+3. `channels` adında bir döküman oluştur.
+4. `list` adında bir **Array** alanı ekle.
+5. İçine **Map** tipinde kanallar ekle:
+   - `slug`: "kanal_adi" (String)
+   - `chatroomId`: 123456 (Number)
+
+Bot bu listeyi anlık olarak izler ve değişiklikleri otomatik uygular.
+
+---
+
+## Bot Durum Takibi
+
+Frontend (index.html), botun gönderdiği "heartbeat" sinyallerini izler:
+- Bot her 30 saniyede bir `bot_status/main` dökümanını günceller.
+- Eğer sinyal 60 saniyeden eskiyse, arayüzde **BOT OFFLINE** uyarısı çıkar.
+- Bot online ise kaç kanalı dinlediği bilgisi görünür.
+
 ## Firestore Veri Yapısı
 
 ```

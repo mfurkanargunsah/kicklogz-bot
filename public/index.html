@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KickStats</title>
+  <title>AhaOe</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap"
     rel="stylesheet">
   <style>
@@ -223,14 +223,19 @@
       flex-shrink: 0;
     }
 
-    .live-badge {
+    .live-badge, .status-badge {
       font-size: .7rem;
       background: var(--accent);
       color: #000;
       padding: .2rem .6rem;
       font-family: 'Syne', sans-serif;
       font-weight: 800;
-      margin-left: auto;
+      margin-left: 0.5rem;
+    }
+
+    .status-badge.offline {
+      background: #ff4444;
+      color: #fff;
     }
 
     input[type=text] {
@@ -254,7 +259,8 @@
 <body>
   <header>
     <div class="dot"></div>
-    <div class="logo">Kick<span>Stats</span></div>
+    <div class="logo">Aha<span>Oe</span></div>
+    <span id="bot-status" class="status-badge offline">BOT OFFLINE</span>
     <span id="live-badge" class="live-badge" style="display:none">● LIVE</span>
   </header>
   <main>
@@ -306,6 +312,29 @@
 
     let chattersUnsubscribe = null;
     let allChatters = [];
+
+    // Bot durumunu izle (Heartbeat)
+    onSnapshot(doc(db, 'bot_status', 'main'), (snap) => {
+      const el = document.getElementById('bot-status');
+      if (!snap.exists()) {
+        el.textContent = 'BOT OFFLINE';
+        el.className = 'status-badge offline';
+        return;
+      }
+      
+      const data = snap.data();
+      const lastHeartbeat = data.last_heartbeat?.toDate();
+      const now = new Date();
+      
+      // 60 saniyeden eskiyse offline say
+      if (lastHeartbeat && (now - lastHeartbeat) < 60000) {
+        el.textContent = `BOT ONLINE (${data.active_channels || 0} Kanal)`;
+        el.className = 'status-badge';
+      } else {
+        el.textContent = 'BOT OFFLINE';
+        el.className = 'status-badge offline';
+      }
+    });
 
     // Kanalları realtime dinle
     onSnapshot(collection(db, 'channels'), (snapshot) => {

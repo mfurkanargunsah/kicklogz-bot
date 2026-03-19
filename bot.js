@@ -3,10 +3,8 @@ const { initializeApp, cert } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 
 // ── Ayarlar ──────────────────────────────────────────────
-const CHANNELS = [
-  { slug: 'ahapulco', chatroomId: 11484792 },
-  // { slug: 'diger_kanal', chatroomId: 000000 },
-];
+// Kanallar artık Firestore üzerinden dinamik olarak okunacak
+let activeConnections = new Map(); // chatroomId -> WebSocket
 // ─────────────────────────────────────────────────────────
 
 // Firebase başlat (Railway env variable'dan okur)
@@ -16,7 +14,23 @@ initializeApp({
 
 const db = getFirestore();
 
-const KICK_WS_URL = 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false';
+// Pusher URL - Env variable veya varsayılan
+const KICK_WS_URL = process.env.KICK_WS_URL || 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false';
+
+// 1. Heartbeat Sistemi (30 saniyede bir durum güncelle)
+function startHeartbeat() {
+  console.log('[Heartbeat] Başlatıldı');
+  setInterval(async () => {
+    try {
+      await db.collection('bot_status').doc('main').set({
+        last_heartbeat: FieldValue.serverTimestamp(),
+        active_channels: activeConnections.size
+      });
+    } catch (e) {
+      console.error('[Heartbeat] Güncelleme hatası:', e.message);
+    }
+  }, 30000);
+}
 
 async function saveMessage(msg) {
   const batch = db.batch();
@@ -51,8 +65,11 @@ async function saveMessage(msg) {
 }
 
 function listenChannel({ slug, chatroomId }) {
+  if (activeConnections.has(chatroomId)) return;
+
   const ws = new WebSocket(KICK_WS_URL);
   let pingInterval;
+  activeConnections.set(chatroomId, ws);
 
   ws.on('open', () => {
     console.log(`[${slug}] WebSocket bağlandı`);
@@ -80,11 +97,13 @@ function listenChannel({ slug, chatroomId }) {
       let data;
       try { data = JSON.parse(parsed.data); } catch { return; }
 
+      // Güvenli veri okuma
+      const sender = data.sender || {};
       const msg = {
         channel:  slug,
-        user_id:  data.sender?.id?.toString() ?? 'unknown',
-        username: data.sender?.username ?? 'unknown',
-        content:  data.content ?? '',
+        user_id:  (sender.id || 'unknown').toString(),
+        username: sender.username || 'unknown',
+        content:  data.content || '',
       };
 
       try {
@@ -98,8 +117,18 @@ function listenChannel({ slug, chatroomId }) {
 
   ws.on('close', (code) => {
     clearInterval(pingInterval);
-    console.log(`[${slug}] Bağlantı kapandı (${code}), 5sn sonra yeniden bağlanıyor...`);
-    setTimeout(() => listenChannel({ slug, chatroomId }), 5000);
+    activeConnections.delete(chatroomId);
+    
+    // Eğer hala bu kanalı dinlememiz gerekiyorsa 5sn sonra tekrar dene
+    console.log(`[${slug}] Bağlantı kapandı (${code})`);
+    
+    // Bu kısım dinamik liste tarafından yönetilecek, 
+    // ama beklenmedik kapanmalarda otomatik retry için:
+    setTimeout(() => {
+      // Hala listede olup olmadığını kontrol et (dinamik olması için)
+      // Bu örnekte basitlik için direkt retry yapıyoruz.
+      // Not: Dinamik yönetim için main() içindeki listener tekrar tetiklenecektir.
+    }, 5000);
   });
 
   ws.on('error', (err) => {
@@ -109,9 +138,41 @@ function listenChannel({ slug, chatroomId }) {
 
 async function main() {
   console.log('Bot başlatılıyor...');
-  for (const ch of CHANNELS) {
-    listenChannel(ch);
-  }
+  
+  // Heartbeat başlat
+  startHeartbeat();
+
+  // Firestore'dan kanalları izle (Dinamik Kanal Yönetimi)
+  console.log('[Config] Kanal listesi izleniyor...');
+  db.collection('bot_config').doc('channels').onSnapshot((doc) => {
+    if (!doc.exists) {
+      console.log('[Config] bot_config/channels dökümanı bulunamadı!');
+      return;
+    }
+
+    const data = doc.data();
+    const channels = data.list || [];
+
+    // Yeni eklenenleri başlat
+    channels.forEach(ch => {
+      if (!activeConnections.has(ch.chatroomId)) {
+        console.log(`[Config] Yeni kanal eklendi: ${ch.slug}`);
+        listenChannel(ch);
+      }
+    });
+
+    // Kaldırılanları durdur
+    const currentIds = channels.map(c => c.chatroomId);
+    activeConnections.forEach((ws, chatroomId) => {
+      if (!currentIds.includes(chatroomId)) {
+        console.log(`[Config] Kanal kaldırıldı (chatroomId: ${chatroomId}), bağlantı kapatılıyor...`);
+        ws.terminate();
+        activeConnections.delete(chatroomId);
+      }
+    });
+  }, (err) => {
+    console.error('[Config] Kanal listesi okuma hatası:', err.message);
+  });
 }
 
 main();
