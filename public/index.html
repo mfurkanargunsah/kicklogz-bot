@@ -277,24 +277,8 @@
 
     <div id="ban-view" style="display: none;">
       <h2>Ban Merkezi <span id="ban-count-badge" class="live-badge" style="background: #ff4444; color: white;">0</span></h2>
-      <p style="color: var(--muted); font-size: 0.8rem; margin-bottom: 1.5rem;">Hedef kanallarda yakalanıp <b>otomatik banlananlar</b>.</p>
+      <p style="color: var(--muted); font-size: 0.8rem; margin-bottom: 1.5rem;">Hedef kanallarda yakalanıp otomatik banlananlar.</p>
       
-      <div id="ban-settings" class="channel-card" style="margin-bottom: 2rem; border-style: dashed; cursor: default;">
-        <h2 style="margin-bottom: 1rem; color: var(--accent); font-size: 0.75rem;">🛡️ Ban Bot Ayarları</h2>
-        <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
-          <div>
-            <div class="stat-label" style="margin-bottom: 0.5rem;">Kendi Kanal Adın (Slug)</div>
-            <input type="text" id="mod-slug" placeholder="örn: feanor-kt" style="margin-bottom: 0; width: 220px;">
-          </div>
-          <div>
-            <div class="stat-label" style="margin-bottom: 0.5rem;">Kanal ID (Sayısal)</div>
-            <input type="text" id="mod-id" placeholder="örn: 26080309" style="margin-bottom: 0; width: 180px;">
-          </div>
-          <button onclick="saveModeratorSettings()" style="height: 38px; background: var(--accent); border: none; padding: 0 1.5rem; font-family: 'Syne', sans-serif; font-weight: 800; cursor: pointer; transition: opacity 0.2s;">KAYDET</button>
-        </div>
-        <div id="save-status" style="font-size: 0.7rem; color: var(--accent); margin-top: 0.8rem; display: none;">✓ Ayarlar kaydedildi. Bot saniyeler içinde güncellenecek.</div>
-      </div>
-
       <div id="bans-list">
         <div class="empty">Henüz yasaklanan kimse yok.</div>
       </div>
@@ -460,43 +444,6 @@
       document.getElementById('channel-view').style.display = 'none';
       document.getElementById('ban-view').style.display = 'none';
       document.getElementById('live-badge').style.display = 'none';
-    };
-
-    // Ayarları dinle ve kutuları doldur
-    import { updateDoc } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
-    
-    onSnapshot(doc(db, 'bot_config', 'channels'), (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-        const mod = data.moderator_setting || {};
-        const slugInput = document.getElementById('mod-slug');
-        const idInput = document.getElementById('mod-id');
-        
-        // Sadece kullanıcı dokunmuyorsa güncelle (flicker önleme)
-        if (document.activeElement !== slugInput) slugInput.value = mod.slug || '';
-        if (document.activeElement !== idInput) idInput.value = mod.id || '';
-    });
-
-    window.saveModeratorSettings = async function() {
-        const slug = document.getElementById('mod-slug').value.trim();
-        const id = document.getElementById('mod-id').value.trim();
-        const statusEl = document.getElementById('save-status');
-        
-        if (!slug || !id) {
-            alert('Lütfen hem kanal adını hem de sayısal ID\'yi girin.');
-            return;
-        }
-
-        try {
-            await updateDoc(doc(db, 'bot_config', 'channels'), {
-                moderator_setting: { slug, id }
-            });
-            statusEl.style.display = 'block';
-            setTimeout(() => statusEl.style.display = 'none', 3000);
-        } catch (e) {
-            console.error("Kaydetme hatası:", e);
-            alert("Kaydedilemedi: " + e.message);
-        }
     };
 
     window.filterChatters = function (val) {
