@@ -50,7 +50,6 @@ async function getKickAccessToken() {
     params.append('grant_type', 'client_credentials');
     params.append('client_id', clientId);
     params.append('client_secret', clientSecret);
-    params.append('scope', 'channel:moderate chat:edit moderation:ban');
 
     const response = await axios.post('https://id.kick.com/oauth/token', params, {
       headers: {
