@@ -8,9 +8,20 @@ let activeConnections = new Map(); // chatroomId -> WebSocket
 // ─────────────────────────────────────────────────────────
 
 // Firebase başlat (Railway env variable'dan okur)
-initializeApp({
-  credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
-});
+try {
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT environment variable eksik!');
+  }
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  initializeApp({
+    credential: cert(serviceAccount),
+  });
+  console.log('[Firebase] Başarıyla başlatıldı');
+} catch (e) {
+  console.error('[Firebase] Başlatma hatası!!!:', e.message);
+  console.error('Lütfen Railway Variables kısmındaki FIREBASE_SERVICE_ACCOUNT değerini kontrol edin. JSON formatı doğru olmalı.');
+  process.exit(1); // Kritik hata, süreci durdur
+}
 
 const db = getFirestore();
 
@@ -143,15 +154,21 @@ async function main() {
   startHeartbeat();
 
   // Firestore'dan kanalları izle (Dinamik Kanal Yönetimi)
-  console.log('[Config] Kanal listesi izleniyor...');
+  console.log('[Config] bot_config/channels listesi dinleniyor...');
   db.collection('bot_config').doc('channels').onSnapshot((doc) => {
     if (!doc.exists) {
-      console.log('[Config] bot_config/channels dökümanı bulunamadı!');
+      console.warn('[Config] UYARI: bot_config/channels dökümanı Firestore\'da bulunamadı!');
+      console.info('Lütfen Firestore\'da bot_config koleksiyonu içine channels dökümanı oluşturun.');
       return;
     }
 
     const data = doc.data();
     const channels = data.list || [];
+    console.log(`[Config] Yapılandırma güncellendi. Toplam kanal: ${channels.length}`);
+
+    if (channels.length === 0) {
+      console.warn('[Config] UYARI: Kanal listesi boş! Bot hiçbir kanalı dinlemiyor.');
+    }
 
     // Yeni eklenenleri başlat
     channels.forEach(ch => {
