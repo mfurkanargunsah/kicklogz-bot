@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KickStats</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111;
+      --border: #222;
+      --accent: #53fc18;
+      --text: #e8e8e8;
+      --muted: #555;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Space Mono', monospace;
+      min-height: 100vh;
+    }
+
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 2rem 3rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+    }
+
+    .logo span {
+      color: var(--accent);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .3
+      }
+    }
+
+    main {
+      padding: 3rem;
+      max-width: 900px;
+    }
+
+    h2 {
+      font-family: 'Syne', sans-serif;
+      font-size: .9rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .15em;
+      margin-bottom: 1.2rem;
+    }
+
+    .channel-card {
+      display: block;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      padding: 1.5rem 2rem;
+      margin-bottom: 1rem;
+      cursor: pointer;
+      transition: border-color .2s;
+      position: relative;
+    }
+
+    .channel-card:hover {
+      border-color: var(--accent);
+    }
+
+    .channel-name {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    .channel-meta {
+      color: var(--muted);
+      font-size: .8rem;
+      margin-top: .4rem;
+    }
+
+    .arrow {
+      position: absolute;
+      right: 2rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+    }
+
+    .empty {
+      color: var(--muted);
+      padding: 2rem;
+      border: 1px dashed var(--border);
+      text-align: center;
+      font-size: .9rem;
+    }
+
+    #channel-view {
+      display: none;
+    }
+
+    .back {
+      color: var(--accent);
+      font-size: .85rem;
+      display: inline-block;
+      margin-bottom: 2rem;
+      cursor: pointer;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .stat-card {
+      border: 1px solid var(--border);
+      padding: 1.2rem 1.5rem;
+    }
+
+    .stat-val {
+      font-family: 'Syne', sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--accent);
+      transition: all .3s;
+    }
+
+    .stat-label {
+      font-size: .7rem;
+      color: var(--muted);
+      margin-top: .3rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+
+    .chatter {
+      display: flex;
+      align-items: center;
+      gap: .8rem;
+      margin-bottom: .6rem;
+      animation: fadeIn .3s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateX(-8px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateX(0)
+      }
+    }
+
+    .rank {
+      font-size: .75rem;
+      color: var(--muted);
+      width: 1.5rem;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .chatter-bar-wrap {
+      flex: 1;
+      background: var(--border);
+      height: 4px;
+    }
+
+    .chatter-bar {
+      height: 4px;
+      background: var(--accent);
+      transition: width .5s ease;
+    }
+
+    .chatter-name {
+      font-size: .85rem;
+      width: 150px;
+      flex-shrink: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chatter-count {
+      font-size: .75rem;
+      color: var(--muted);
+      width: 60px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .live-badge {
+      font-size: .7rem;
+      background: var(--accent);
+      color: #000;
+      padding: .2rem .6rem;
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      margin-left: auto;
+    }
+
+    input[type=text] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: .6rem 1rem;
+      font-family: 'Space Mono', monospace;
+      font-size: .85rem;
+      width: 280px;
+      outline: none;
+      margin-bottom: 1rem;
+    }
+
+    input[type=text]:focus {
+      border-color: var(--accent);
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="dot"></div>
+    <div class="logo">Kick<span>Stats</span></div>
+    <span id="live-badge" class="live-badge" style="display:none">● LIVE</span>
+  </header>
+  <main>
+    <div id="home-view">
+      <h2>Kanallar</h2>
+      <div id="channels-list">
+        <div class="empty">Yükleniyor...</div>
+      </div>
+    </div>
+
+    <div id="channel-view">
+      <span class="back" onclick="showHome()">← Geri</span>
+      <div class="stats">
+        <div class="stat-card">
+          <div class="stat-val" id="stat-total">0</div>
+          <div class="stat-label">Toplam Mesaj</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="stat-unique">0</div>
+          <div class="stat-label">Farklı Kullanıcı</div>
+        </div>
+      </div>
+      <h2>Kullanıcı Ara</h2>
+      <input type="text" id="search-input" placeholder="kullanıcı adı..." oninput="filterChatters(this.value)">
+      <h2 style="margin-top:1.5rem">En Aktif Kullanıcılar <span
+          style="color:var(--accent);font-size:.7rem;margin-left:.5rem">● realtime</span></h2>
+      <div id="chatters-list"></div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+    import { getFirestore, collection, doc, onSnapshot, orderBy, query, limit } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+
+    // ── Firebase config buraya ────────────────────────────
+    const firebaseConfig = {
+      apiKey: "AIzaSyDjmDFX8XF9A4whuJN8B7lzXVQzbUArY7U",
+      authDomain: "ahaoe-368e1.firebaseapp.com",
+      projectId: "ahaoe-368e1",
+      storageBucket: "ahaoe-368e1.firebasestorage.app",
+      messagingSenderId: "619723742025",
+      appId: "1:619723742025:web:378803c12557286f161898"
+    };
+
+    // ─────────────────────────────────────────────────────
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let chattersUnsubscribe = null;
+    let allChatters = [];
+
+    // Kanalları realtime dinle
+    onSnapshot(collection(db, 'channels'), (snapshot) => {
+      const channels = [];
+      snapshot.forEach(d => channels.push({ id: d.id, ...d.data() }));
+      renderChannels(channels);
+    });
+
+    function renderChannels(channels) {
+      const el = document.getElementById('channels-list');
+      if (channels.length === 0) {
+        el.innerHTML = '<div class="empty">Henüz veri yok — bot çalışıyor mu?</div>';
+        return;
+      }
+      el.innerHTML = channels.map(c => `
+      <div class="channel-card" onclick="window.showChannel('${c.id}')">
+        <div class="channel-name">${c.id}</div>
+        <div class="channel-meta">${(c.total_messages || 0).toLocaleString('tr')} mesaj</div>
+        <span class="arrow">→</span>
+      </div>
+    `).join('');
+    }
+
+    window.showChannel = function (slug) {
+      document.getElementById('home-view').style.display = 'none';
+      document.getElementById('channel-view').style.display = 'block';
+      document.getElementById('live-badge').style.display = 'block';
+
+      // Toplam mesaj sayacı
+      onSnapshot(doc(db, 'channels', slug), (snap) => {
+        const data = snap.data() || {};
+        document.getElementById('stat-total').textContent = (data.total_messages || 0).toLocaleString('tr');
+      });
+
+      // Chatters realtime
+      if (chattersUnsubscribe) chattersUnsubscribe();
+      const q = query(
+        collection(db, 'channels', slug, 'chatters'),
+        orderBy('message_count', 'desc'),
+        limit(50)
+      );
+      chattersUnsubscribe = onSnapshot(q, (snapshot) => {
+        allChatters = [];
+        snapshot.forEach(d => allChatters.push(d.data()));
+        document.getElementById('stat-unique').textContent = allChatters.length.toLocaleString('tr');
+        renderChatters(allChatters);
+      });
+    };
+
+    window.showHome = function () {
+      if (chattersUnsubscribe) chattersUnsubscribe();
+      document.getElementById('home-view').style.display = 'block';
+      document.getElementById('channel-view').style.display = 'none';
+      document.getElementById('live-badge').style.display = 'none';
+    };
+
+    window.filterChatters = function (val) {
+      const filtered = val
+        ? allChatters.filter(u => u.username.toLowerCase().includes(val.toLowerCase()))
+        : allChatters;
+      renderChatters(filtered);
+    };
+
+    function renderChatters(chatters) {
+      const max = chatters[0]?.message_count || 1;
+      document.getElementById('chatters-list').innerHTML = chatters.map((u, i) => `
+      <div class="chatter">
+        <span class="rank">${i + 1}</span>
+        <span class="chatter-name" title="${u.username}">${u.username}</span>
+        <div class="chatter-bar-wrap">
+          <div class="chatter-bar" style="width:${Math.round((u.message_count / max) * 100)}%"></div>
+        </div>
+        <span class="chatter-count">${u.message_count.toLocaleString('tr')}</span>
+      </div>
+    `).join('');
+    }
+  </script>
+</body>
+
+</html>
