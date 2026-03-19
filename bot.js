@@ -275,7 +275,7 @@ async function main() {
     const data = doc.data();
     
     // Moderatör ayarlarını güncelle
-    const modSetting = data.moderator_setting || {};
+    const modSetting = data.moderator_settings || data.moderator_setting || {};
     console.log('[Config] Moderatör Ayarları:', JSON.stringify(modSetting));
     
     if (modSetting.slug && modSetting.slug !== MY_CHANNEL) {
