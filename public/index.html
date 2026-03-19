@@ -260,6 +260,10 @@
   <header>
     <div class="dot"></div>
     <div class="logo">Aha<span>Oe</span></div>
+    <div style="flex: 1; display: flex; gap: 1rem; margin-left: 2rem;">
+        <span class="back" style="margin-bottom: 0" onclick="showHome()">Kanallar</span>
+        <span class="back" style="margin-bottom: 0" onclick="showBanHub()">Ban Merkezi</span>
+    </div>
     <span id="bot-status" class="status-badge offline">BOT OFFLINE</span>
     <span id="live-badge" class="live-badge" style="display:none">● LIVE</span>
   </header>
@@ -268,6 +272,15 @@
       <h2>Kanallar</h2>
       <div id="channels-list">
         <div class="empty">Yükleniyor...</div>
+      </div>
+    </div>
+
+    <div id="ban-view" style="display: none;">
+      <h2>Ban Merkezi <span id="ban-count-badge" class="live-badge" style="background: #ff4444; color: white;">0</span></h2>
+      <p style="color: var(--muted); font-size: 0.8rem; margin-bottom: 1.5rem;">Hedef kanallarda yakalanıp <b>feanor-kt</b> kanalında otomatik banlananlar.</p>
+      
+      <div id="bans-list">
+        <div class="empty">Henüz yasaklanan kimse yok.</div>
       </div>
     </div>
 
@@ -311,6 +324,7 @@
     const db = getFirestore(app);
 
     let chattersUnsubscribe = null;
+    let bansUnsubscribe = null;
     let allChatters = [];
 
     // Bot durumunu izle (Heartbeat)
@@ -345,6 +359,16 @@
       renderChannels(channels);
     });
 
+    // Yasaklıları realtime dinle
+    onSnapshot(query(collection(db, 'banned_users'), orderBy('timestamp', 'desc'), limit(50)), (snapshot) => {
+      const bans = [];
+      snapshot.forEach(d => bans.push(d.data()));
+      document.getElementById('ban-count-badge').textContent = snapshot.size;
+      if (document.getElementById('ban-view').style.display === 'block') {
+        renderBans(bans);
+      }
+    });
+
     function renderChannels(channels) {
       const el = document.getElementById('channels-list');
       if (channels.length === 0) {
@@ -360,9 +384,37 @@
     `).join('');
     }
 
+    function renderBans(bans) {
+      const el = document.getElementById('bans-list');
+      if (bans.length === 0) {
+        el.innerHTML = '<div class="empty">Henüz yasaklanan kimse yok.</div>';
+        return;
+      }
+      el.innerHTML = bans.map(b => `
+        <div class="channel-card" style="border-left: 4px solid #ff4444; cursor: default">
+          <div class="channel-name">${b.username}</div>
+          <div class="channel-meta">
+            <b>${b.target_channel}</b> kanalında yakalandı | 
+            ${b.timestamp?.toDate().toLocaleString('tr')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    window.showBanHub = function() {
+        document.getElementById('home-view').style.display = 'none';
+        document.getElementById('channel-view').style.display = 'none';
+        document.getElementById('ban-view').style.display = 'block';
+        document.getElementById('live-badge').style.display = 'none';
+        
+        // Yeniden render et (son verileri çekmek için)
+        // Not: snapshot zaten güncel tutuyor.
+    };
+
     window.showChannel = function (slug) {
       document.getElementById('home-view').style.display = 'none';
       document.getElementById('channel-view').style.display = 'block';
+      document.getElementById('ban-view').style.display = 'none';
       document.getElementById('live-badge').style.display = 'block';
 
       // Toplam mesaj sayacı
@@ -390,6 +442,7 @@
       if (chattersUnsubscribe) chattersUnsubscribe();
       document.getElementById('home-view').style.display = 'block';
       document.getElementById('channel-view').style.display = 'none';
+      document.getElementById('ban-view').style.display = 'none';
       document.getElementById('live-badge').style.display = 'none';
     };
 
@@ -401,6 +454,7 @@
     };
 
     function renderChatters(chatters) {
+      if (chatters.length === 0) return;
       const max = chatters[0]?.message_count || 1;
       document.getElementById('chatters-list').innerHTML = chatters.map((u, i) => `
       <div class="chatter">

@@ -1,9 +1,14 @@
 const WebSocket = require('ws');
+const axios = require('axios');
 const { initializeApp, cert } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 
 // ── Ayarlar ──────────────────────────────────────────────
 let activeConnections = new Map(); // chatroomId (string) -> WebSocket
+let kickToken = null;
+let tokenExpiresAt = 0;
+
+const MY_CHANNEL = 'feanor-kt'; // Yasakların uygulanacağı kendi kanalın
 // ─────────────────────────────────────────────────────────
 
 // Firebase başlat
@@ -24,6 +29,76 @@ try {
 const db = getFirestore();
 const KICK_WS_URL = process.env.KICK_WS_URL || 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false';
 
+// ── Kick API Fonksiyonları ───────────────────────────────
+
+async function getKickAccessToken() {
+  // Eğer token varsa ve süresi dolmadıysa (5 dk pay bırak) mevcut olanı kullan
+  if (kickToken && Date.now() < tokenExpiresAt - 300000) {
+    return kickToken;
+  }
+
+  const clientId = process.env.KICK_CLIENT_ID;
+  const clientSecret = process.env.KICK_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    // console.warn('[Kick API] KICK_CLIENT_ID veya KICK_CLIENT_SECRET eksik. Ban işlemi yapılamaz.');
+    return null;
+  }
+
+  try {
+    const response = await axios.post('https://id.kick.com/oauth/token', {
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: 'channel:moderate chat:edit' // İhtiyaç duyulan izinler
+    });
+
+    kickToken = response.data.access_token;
+    tokenExpiresAt = Date.now() + (response.data.expires_in * 1000);
+    console.log('[Kick API] Yeni Access Token alındı.');
+    return kickToken;
+  } catch (error) {
+    console.error('[Kick API] Token alma hatası:', error.response?.data || error.message);
+    return null;
+  }
+}
+
+async function banUserOnKick(username, targetChannel) {
+  const token = await getKickAccessToken();
+  if (!token) return;
+
+  try {
+    const response = await axios.post(`https://api.kick.com/public/v1/channels/${MY_CHANNEL}/bans`, {
+      username: username,
+      reason: `Otomatik Ban: ${targetChannel} kanalında görüldü.`
+    }, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log(`[Kick API] ${username} başarıyla banlandı.`);
+    
+    // Firestore'a ban kaydı ekle
+    await db.collection('banned_users').add({
+      username: username,
+      target_channel: targetChannel,
+      my_channel: MY_CHANNEL,
+      timestamp: FieldValue.serverTimestamp(),
+      status: 'success'
+    });
+
+  } catch (error) {
+    // 409: Zaten banlı olabilir, sessizce geç
+    if (error.response?.status === 409) return;
+    
+    console.error(`[Kick API] ${username} banlanırken hata:`, error.response?.data || error.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+
 // Yardımcı fonksiyon: Objede case-insensitive ve trimli key arama
 const findKey = (obj, target) => {
   if (!obj) return null;
@@ -40,9 +115,8 @@ function startHeartbeat() {
       await db.collection('bot_status').doc('main').set({
         last_heartbeat: FieldValue.serverTimestamp(),
         active_channels: activeConnections.size,
-        version: '1.0.1'
+        version: '1.1.0'
       });
-      // console.log(`[Heartbeat] Güncellendi (${activeConnections.size} kanal)`);
     } catch (e) {
       console.error('[Heartbeat] Güncelleme hatası:', e.message);
     }
@@ -82,8 +156,15 @@ async function saveMessage(msg) {
     }, { merge: true });
 
     await batch.commit();
+
+    // 4. Ban Bot Tetikleyici
+    // Bot kendi kanalımızdan gelen mesajları banlamamalı
+    if (msg.channel !== MY_CHANNEL && msg.username !== 'unknown') {
+      await banUserOnKick(msg.username, msg.channel);
+    }
+
   } catch (error) {
-    console.error(`[${msg.channel}] Mesaj kaydetme hatası:`, error.message);
+    console.error(`[${msg.channel}] Mesaj işleme hatası:`, error.message);
   }
 }
 
@@ -135,7 +216,6 @@ function listenChannel({ slug, chatroomId }) {
       };
 
       await saveMessage(msg);
-      // console.log(`[${slug}] ${msg.username}: ${msg.content}`);
     }
   });
 
@@ -143,9 +223,6 @@ function listenChannel({ slug, chatroomId }) {
     clearInterval(pingInterval);
     activeConnections.delete(idStr);
     console.log(`[${slug}] Bağlantı kapandı (Kod: ${code}). 5sn içinde tekrar denenecek.`);
-    setTimeout(() => {
-      // Yeniden bağlanma mantığı Snapshot listener tarafından tetiklenecektir
-    }, 5000);
   });
 
   ws.on('error', (err) => {
