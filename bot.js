@@ -8,7 +8,7 @@ let activeConnections = new Map(); // chatroomId (string) -> WebSocket
 let kickToken = null;
 let tokenExpiresAt = 0;
 
-const MY_CHANNEL = 'feanor-kt'; // Yasakların uygulanacağı kendi kanalın
+let MY_CHANNEL = 'unknown'; // Yasakların uygulanacağı kendi kanalın
 // ─────────────────────────────────────────────────────────
 
 // Firebase başlat
@@ -84,7 +84,9 @@ async function banUserOnKick(userId, username, targetChannel) {
   if (!token) return;
 
   if (!MY_CHANNEL_ID) {
-    MY_CHANNEL_ID = await getChannelId(MY_CHANNEL);
+    if (MY_CHANNEL !== 'unknown') {
+      MY_CHANNEL_ID = await getChannelId(MY_CHANNEL);
+    }
     if (!MY_CHANNEL_ID) return;
   }
 
@@ -267,6 +269,18 @@ async function main() {
     }
 
     const data = doc.data();
+    
+    // Moderatör ayarlarını güncelle
+    const modSetting = data.moderator_setting || {};
+    if (modSetting.slug && modSetting.slug !== MY_CHANNEL) {
+      console.log(`[Config] Moderatör Kanalı Güncellendi: ${modSetting.slug}`);
+      MY_CHANNEL = modSetting.slug;
+      if (modSetting.id) MY_CHANNEL_ID = modSetting.id;
+      else MY_CHANNEL_ID = null; // ID yoksa tekrar aratacak
+    } else if (modSetting.id && modSetting.id !== MY_CHANNEL_ID) {
+      MY_CHANNEL_ID = modSetting.id;
+    }
+
     const listRaw = data.list || [];
     const channels = Array.isArray(listRaw) ? listRaw : Object.values(listRaw);
     
