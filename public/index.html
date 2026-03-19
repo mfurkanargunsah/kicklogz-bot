@@ -326,13 +326,15 @@
       const lastHeartbeat = data.last_heartbeat?.toDate();
       const now = new Date();
       
-      // 60 saniyeden eskiyse offline say
-      if (lastHeartbeat && (now - lastHeartbeat) < 60000) {
+      // 120 saniyeden eskiyse offline say (saat farkları için tolerans)
+      if (lastHeartbeat && (now - lastHeartbeat) < 120000) {
         el.textContent = `BOT ONLINE (${data.active_channels || 0} Kanal)`;
         el.className = 'status-badge';
+        console.log("[Bot] Alive:", lastHeartbeat, "Delta:", Math.round((now - lastHeartbeat)/1000) + "s");
       } else {
         el.textContent = 'BOT OFFLINE';
         el.className = 'status-badge offline';
+        console.log("[Bot] Dead or Late:", lastHeartbeat);
       }
     });
 
