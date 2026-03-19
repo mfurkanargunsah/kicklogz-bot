@@ -5,8 +5,6 @@ const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 
 // ── Ayarlar ──────────────────────────────────────────────
 let activeConnections = new Map(); // chatroomId (string) -> WebSocket
-let kickToken = null;
-let tokenExpiresAt = 0;
 
 let MY_CHANNEL = 'unknown'; // Yasakların uygulanacağı kendi kanalın
 // ─────────────────────────────────────────────────────────
@@ -44,37 +42,58 @@ async function getChannelId(slug) {
 }
 
 async function getKickAccessToken() {
-  // Eğer token varsa ve süresi dolmadıysa (5 dk pay bırak) mevcut olanı kullan
-  if (kickToken && Date.now() < tokenExpiresAt - 300000) {
-    return kickToken;
-  }
-
-  const clientId = process.env.KICK_CLIENT_ID;
-  const clientSecret = process.env.KICK_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    // console.warn('[Kick API] KICK_CLIENT_ID veya KICK_CLIENT_SECRET eksik. Ban işlemi yapılamaz.');
-    return null;
-  }
-
+  const tokenDocRef = db.collection('bot_config').doc('tokens');
+  
   try {
-    const params = new URLSearchParams();
-    params.append('grant_type', 'client_credentials');
-    params.append('client_id', clientId);
-    params.append('client_secret', clientSecret);
+    const doc = await tokenDocRef.get();
+    if (!doc.exists) {
+      console.warn('[Kick API] Firestore\'da token dökümanı (bot_config/tokens) bulunamadı!');
+      return null;
+    }
 
-    const response = await axios.post('https://id.kick.com/oauth/token', params, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
+    const data = doc.data();
+    
+    // Eğer mevcut access_token geçerliyse (5 dk pay bırak) direkt dön
+    if (data.access_token && data.expires_at && Date.now() < data.expires_at - 300000) {
+      return data.access_token;
+    }
+
+    // Değilse refresh_token ile yenile
+    console.log('[Kick API] Access Token süresi dolmuş veya eksik, yenileniyor...');
+    
+    const clientId = process.env.KICK_CLIENT_ID;
+    const clientSecret = process.env.KICK_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret || !data.refresh_token) {
+      console.error('[Kick API] Yenileme için gerekli bilgiler (ID, Secret veya Refresh Token) eksik!');
+      return null;
+    }
+
+    const response = await axios.post('https://id.kick.com/oauth/token', {
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: data.refresh_token
+    }, {
+      headers: { 'Content-Type': 'application/json' }
     });
 
-    kickToken = response.data.access_token;
-    tokenExpiresAt = Date.now() + (response.data.expires_in * 1000);
-    console.log('[Kick API] Yeni Access Token alındı.');
-    return kickToken;
+    const { access_token, refresh_token, expires_in } = response.data;
+    const expires_at = Date.now() + (expires_in * 1000);
+
+    // Yeni tokenları Firestore'a kaydet (Kick refresh_token'ı her seferinde döndürebilir)
+    await tokenDocRef.update({
+      access_token,
+      refresh_token: refresh_token || data.refresh_token,
+      expires_at,
+      updated_at: Date.now()
+    });
+
+    console.log('[Kick API] Token başarıyla yenilendi ve Firestore güncellendi.');
+    return access_token;
+
   } catch (error) {
-    console.error('[Kick API] Token alma hatası:', error.response?.data || error.message);
+    console.error('[Kick API] Token yönetim hatası:', error.response?.data || error.message);
     return null;
   }
 }

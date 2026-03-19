@@ -1,0 +1,1 @@
+https://id.kick.com/oauth/authorize?client_id=01KM3RDB74NZ0TZ8QKXAKRGJBS&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fcallback&response_type=code&scope=moderation%3Aban&state=474fd5956c1564809f8f9932392cf75f&code_challenge=AVOogGSS_XqEuA3Oz1o_FtVIni_HgdobB_sgLVw8xCo&code_challenge_method=S256
