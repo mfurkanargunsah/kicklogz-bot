@@ -85,9 +85,13 @@ async function banUserOnKick(userId, username, targetChannel) {
 
   if (!MY_CHANNEL_ID) {
     if (MY_CHANNEL !== 'unknown') {
+      console.log(`[Kick API] ${MY_CHANNEL} için ID aranıyor...`);
       MY_CHANNEL_ID = await getChannelId(MY_CHANNEL);
     }
-    if (!MY_CHANNEL_ID) return;
+    if (!MY_CHANNEL_ID) {
+      console.warn('[Kick API] Banlanma işlemi iptal: Moderatör kanal ID\'si (MY_CHANNEL_ID) bulunamadı.');
+      return;
+    }
   }
 
   try {
@@ -272,12 +276,15 @@ async function main() {
     
     // Moderatör ayarlarını güncelle
     const modSetting = data.moderator_setting || {};
+    console.log('[Config] Moderatör Ayarları:', JSON.stringify(modSetting));
+    
     if (modSetting.slug && modSetting.slug !== MY_CHANNEL) {
       console.log(`[Config] Moderatör Kanalı Güncellendi: ${modSetting.slug}`);
       MY_CHANNEL = modSetting.slug;
       if (modSetting.id) MY_CHANNEL_ID = modSetting.id;
       else MY_CHANNEL_ID = null; // ID yoksa tekrar aratacak
     } else if (modSetting.id && modSetting.id !== MY_CHANNEL_ID) {
+      console.log(`[Config] Moderatör ID Güncellendi: ${modSetting.id}`);
       MY_CHANNEL_ID = modSetting.id;
     }
 
