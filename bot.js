@@ -31,6 +31,18 @@ const KICK_WS_URL = process.env.KICK_WS_URL || 'wss://ws-us2.pusher.com/app/32cb
 
 // ── Kick API Fonksiyonları ───────────────────────────────
 
+let MY_CHANNEL_ID = null;
+
+async function getChannelId(slug) {
+  try {
+    const response = await axios.get(`https://api.kick.com/public/v1/channels/${slug}`);
+    return response.data.id;
+  } catch (error) {
+    console.error(`[Kick API] ${slug} ID bulunamadı:`, error.response?.data || error.message);
+    return null;
+  }
+}
+
 async function getKickAccessToken() {
   // Eğer token varsa ve süresi dolmadıysa (5 dk pay bırak) mevcut olanı kullan
   if (kickToken && Date.now() < tokenExpiresAt - 300000) {
@@ -67,13 +79,20 @@ async function getKickAccessToken() {
   }
 }
 
-async function banUserOnKick(username, targetChannel) {
+async function banUserOnKick(userId, username, targetChannel) {
   const token = await getKickAccessToken();
   if (!token) return;
 
+  if (!MY_CHANNEL_ID) {
+    MY_CHANNEL_ID = await getChannelId(MY_CHANNEL);
+    if (!MY_CHANNEL_ID) return;
+  }
+
   try {
-    const response = await axios.post(`https://api.kick.com/public/v1/channels/${MY_CHANNEL}/bans`, {
-      username: username,
+    // API dökümanına göre doğru endpoint ve gövde
+    await axios.post('https://api.kick.com/public/v1/moderation/bans', {
+      broadcaster_user_id: parseInt(MY_CHANNEL_ID),
+      user_id: parseInt(userId),
       reason: `Otomatik Ban: ${targetChannel} kanalında görüldü.`
     }, {
       headers: {
@@ -82,11 +101,12 @@ async function banUserOnKick(username, targetChannel) {
       }
     });
 
-    console.log(`[Kick API] ${username} başarıyla banlandı.`);
+    console.log(`[Kick API] ${username} (${userId}) başarıyla banlandı.`);
     
     // Firestore'a ban kaydı ekle
     await db.collection('banned_users').add({
       username: username,
+      user_id: userId,
       target_channel: targetChannel,
       my_channel: MY_CHANNEL,
       timestamp: FieldValue.serverTimestamp(),
@@ -94,7 +114,7 @@ async function banUserOnKick(username, targetChannel) {
     });
 
   } catch (error) {
-    // 409: Zaten banlı olabilir, sessizce geç
+    // 409: Zaten banlı olabilir
     if (error.response?.status === 409) return;
     
     console.error(`[Kick API] ${username} banlanırken hata:`, error.response?.data || error.message);
@@ -164,7 +184,7 @@ async function saveMessage(msg) {
     // 4. Ban Bot Tetikleyici
     // Bot kendi kanalımızdan gelen mesajları banlamamalı
     if (msg.channel !== MY_CHANNEL && msg.username !== 'unknown') {
-      await banUserOnKick(msg.username, msg.channel);
+      await banUserOnKick(msg.user_id, msg.username, msg.channel);
     }
 
   } catch (error) {
