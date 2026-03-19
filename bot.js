@@ -46,11 +46,16 @@ async function getKickAccessToken() {
   }
 
   try {
-    const response = await axios.post('https://id.kick.com/oauth/token', {
-      grant_type: 'client_credentials',
-      client_id: clientId,
-      client_secret: clientSecret,
-      scope: 'channel:moderate chat:edit' // İhtiyaç duyulan izinler
+    const params = new URLSearchParams();
+    params.append('grant_type', 'client_credentials');
+    params.append('client_id', clientId);
+    params.append('client_secret', clientSecret);
+    params.append('scope', 'channel:moderate chat:edit moderation:ban');
+
+    const response = await axios.post('https://id.kick.com/oauth/token', params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
     });
 
     kickToken = response.data.access_token;
