@@ -69,13 +69,14 @@ async function getKickAccessToken() {
       return null;
     }
 
-    const response = await axios.post('https://id.kick.com/oauth/token', {
-      grant_type: 'refresh_token',
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: data.refresh_token
-    }, {
-      headers: { 'Content-Type': 'application/json' }
+    const params = new URLSearchParams();
+    params.append('grant_type', 'refresh_token');
+    params.append('client_id', clientId);
+    params.append('client_secret', clientSecret);
+    params.append('refresh_token', data.refresh_token);
+
+    const response = await axios.post('https://id.kick.com/oauth/token', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
     const { access_token, refresh_token, expires_in } = response.data;
