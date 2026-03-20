@@ -100,7 +100,10 @@ async function getKickAccessToken() {
 
 async function banUserOnKick(userId, username, targetChannel) {
   const token = await getKickAccessToken();
-  if (!token) return;
+  if (!token) {
+    console.warn(`[Kick API] ${username} banlanamadı: Token bulunamadı.`);
+    return;
+  }
 
   if (!MY_CHANNEL_ID) {
     if (MY_CHANNEL !== 'unknown') {
@@ -113,16 +116,22 @@ async function banUserOnKick(userId, username, targetChannel) {
     }
   }
 
+  const banBody = {
+    broadcaster_user_id: parseInt(MY_CHANNEL_ID),
+    user_id: parseInt(userId),
+    reason: `Otomatik Ban: ${targetChannel} kanalında görüldü.`
+  };
+
+  console.log(`[Kick API] Ban İsteği Gönderiliyor:`, JSON.stringify(banBody));
+  // console.log(`[Kick API] Token (İlk 15 karakter): ${token.substring(0, 15)}...`);
+
   try {
     // API dökümanına göre doğru endpoint ve gövde
-    await axios.post('https://api.kick.com/public/v1/moderation/bans', {
-      broadcaster_user_id: parseInt(MY_CHANNEL_ID),
-      user_id: parseInt(userId),
-      reason: `Otomatik Ban: ${targetChannel} kanalında görüldü.`
-    }, {
+    await axios.post('https://api.kick.com/public/v1/moderation/bans', banBody, {
       headers: {
         'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       }
     });
 
