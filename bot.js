@@ -8,6 +8,7 @@ let activeConnections = new Map(); // chatroomId (string) -> WebSocket
 
 let MY_CHANNEL = 'unknown'; // Yasakların uygulanacağı kendi kanalın
 let MY_WHITELIST = []; // Banlanmayacak kişilerin listesi
+const bannedUsersCache = new Set(); // RAM Cache: Banlı kullanıcı ID'leri
 // ─────────────────────────────────────────────────────────
 
 // Firebase başlat
@@ -117,11 +118,16 @@ async function banUserOnKick(userId, username, targetChannel) {
     return;
   }
 
-  // Zaten banlandı mı kontrolü
+  // RAM Cache Kontrolü (Gereksiz okuma kotası harcamayı önler)
+  if (bannedUsersCache.has(userId.toString())) {
+    return; // Zaten banlı
+  }
+
+  // Eğer bellekte yoksa ama veritabanında varsa diye yedek kontrol
   try {
     const bannedDoc = await db.collection('banned_users').where('user_id', '==', userId).get();
     if (!bannedDoc.empty) {
-      console.log(`[Kick API] ${username} (${userId}) zaten banlı olarak işaretlenmiş.`);
+      bannedUsersCache.add(userId.toString()); // Belleğe ekle ki birdaha sormasın
       return; // Zaten banlı
     }
   } catch (err) {
@@ -166,6 +172,9 @@ async function banUserOnKick(userId, username, targetChannel) {
       timestamp: FieldValue.serverTimestamp(),
       status: 'success'
     });
+    
+    // Yeni banlanan kişiyi RAM'deki önbelleğe ekle
+    bannedUsersCache.add(userId.toString());
 
   } catch (error) {
     console.error(`[Kick API] ${username} banlanırken hata:`, error.response?.data || error.message);
@@ -178,32 +187,44 @@ async function banUserOnKick(userId, username, targetChannel) {
 async function runRetroBan() {
   try {
     const channelsSnapshot = await db.collection('channels').get();
-    const usersToBan = [];
 
     for (const channelDoc of channelsSnapshot.docs) {
-      const chattersSnapshot = await channelDoc.ref.collection('chatters').get();
-      chattersSnapshot.forEach(doc => {
-        const data = doc.data();
-        if (data.user_id && data.username && data.username !== 'unknown') {
-           usersToBan.push({
-             userId: data.user_id,
-             username: data.username,
-             channel: channelDoc.id
-           });
-        }
-      });
-    }
+      const channelId = channelDoc.id;
+      // Kendi kanalımıza bakmaya gerek yok
+      if (channelId === MY_CHANNEL || channelId === 'unknown') continue;
 
-    console.log(`[Retro Ban] Toplam ${usersToBan.length} kullanıcı bulundu. Banlama başlıyor...`);
-    for (const user of usersToBan) {
-      // Sadece izlenen yasadışı kanallardaki kişileri kendi kanalımızda banlamak istiyoruz.
-      // Kendi kanalımızın chatters listesini filtreleyelim:
-      if (user.channel !== MY_CHANNEL && user.channel !== 'unknown') {
-        await banUserOnKick(user.userId, user.username, user.channel);
-        await new Promise(r => setTimeout(r, 600)); // Kick API rate limit koruması
+      console.log(`[Retro Ban] ${channelId} kanalı taranıyor...`);
+      let processedCount = 0;
+      let lastDoc = null;
+      let hasMore = true;
+
+      // Pagination mantığı ile her seferinde 500'er limitli çek (Bellek patlamasını ve aşırı isteği önler)
+      while (hasMore) {
+        let q = channelDoc.ref.collection('chatters').limit(500);
+        if (lastDoc) {
+          q = q.startAfter(lastDoc);
+        }
+        
+        const chattersSnapshot = await q.get();
+        if (chattersSnapshot.empty) {
+          hasMore = false;
+          break;
+        }
+
+        lastDoc = chattersSnapshot.docs[chattersSnapshot.docs.length - 1];
+
+        for (const doc of chattersSnapshot.docs) {
+          const data = doc.data();
+          if (data.user_id && data.username && data.username !== 'unknown') {
+            await banUserOnKick(data.user_id, data.username, channelId);
+            await new Promise(r => setTimeout(r, 600)); // Kick API rate limit koruması
+            processedCount++;
+          }
+        }
       }
+      console.log(`[Retro Ban] ${channelId} kanalı tamamlandı. İşlenen kişi: ${processedCount}`);
     }
-    console.log('[Retro Ban] İşlem tamamlandı!');
+    console.log('[Retro Ban] Tüm işlemler tamamlandı!');
   } catch (err) {
     console.error('[Retro Ban] Hata:', err.message);
   }
@@ -217,51 +238,74 @@ const findKey = (obj, target) => {
   return found ? obj[found] : null;
 };
 
-// 1. Heartbeat Sistemi
-function startHeartbeat() {
-  console.log('[Heartbeat] Başlatıldı');
-  setInterval(async () => {
-    try {
-      await db.collection('bot_status').doc('main').set({
-        last_heartbeat: FieldValue.serverTimestamp(),
-        active_channels: activeConnections.size,
-        version: '1.1.0'
-      });
-    } catch (e) {
-      console.error('[Heartbeat] Güncelleme hatası:', e.message);
+let messageBuffer = { users: {}, channels: {} };
+
+// Belirli aralıklarla (5 saniyede bir) bellekte biriken mesajları Firebase'e yazar
+setInterval(async () => {
+  const operations = [];
+  let currentBatch = db.batch();
+  let opCount = 0;
+
+  for (const channel in messageBuffer.channels) {
+    const chCount = messageBuffer.channels[channel];
+    if (chCount > 0) {
+      const channelRef = db.collection('channels').doc(channel);
+      currentBatch.set(channelRef, {
+        total_messages: FieldValue.increment(chCount),
+        last_activity: FieldValue.serverTimestamp(),
+        slug: channel
+      }, { merge: true });
+      opCount++;
+      messageBuffer.channels[channel] = 0; // buffer'ı sıfırla
     }
-  }, 30000);
-}
+
+    if (opCount >= 400) { operations.push(currentBatch.commit()); currentBatch = db.batch(); opCount = 0; }
+    
+    if (messageBuffer.users[channel]) {
+      for (const userId in messageBuffer.users[channel]) {
+        const uData = messageBuffer.users[channel][userId];
+        if (uData.count > 0) {
+          const userRef = db.collection('channels').doc(channel).collection('chatters').doc(userId);
+          currentBatch.set(userRef, {
+            username: uData.username,
+            user_id: userId,
+            message_count: FieldValue.increment(uData.count),
+            last_seen: FieldValue.serverTimestamp(),
+          }, { merge: true });
+          opCount++;
+          uData.count = 0; // buffer'ı sıfırla
+        }
+
+        if (opCount >= 400) { operations.push(currentBatch.commit()); currentBatch = db.batch(); opCount = 0; }
+      }
+    }
+  }
+
+  if (opCount > 0) operations.push(currentBatch.commit());
+  
+  if (operations.length > 0) {
+    try {
+      await Promise.all(operations);
+    } catch(err) {
+      console.error('[Buffer Flush] Hata:', err.message);
+    }
+  }
+}, 5000); // 5 saniye bekleme süresi
 
 async function saveMessage(msg) {
   try {
-    const batch = db.batch();
-    const timestamp = FieldValue.serverTimestamp();
+    // 1. Buffer objelerini (Bellek) oluştur / güncelle
+    if (!messageBuffer.channels[msg.channel]) messageBuffer.channels[msg.channel] = 0;
+    messageBuffer.channels[msg.channel]++;
+    
+    if (!messageBuffer.users[msg.channel]) messageBuffer.users[msg.channel] = {};
+    if (!messageBuffer.users[msg.channel][msg.user_id]) {
+        messageBuffer.users[msg.channel][msg.user_id] = { count: 0, username: msg.username };
+    }
+    messageBuffer.users[msg.channel][msg.user_id].count++;
+    messageBuffer.users[msg.channel][msg.user_id].username = msg.username; // id'ye karşılık gelen ismi güncelle
 
-    // 1. Kullanıcı istatistiğini güncelle (Mesajı doğrudan kaydetmiyoruz)
-    const userRef = db
-      .collection('channels').doc(msg.channel)
-      .collection('chatters').doc(msg.user_id);
-
-    batch.set(userRef, {
-      username: msg.username,
-      user_id: msg.user_id,
-      message_count: FieldValue.increment(1),
-      last_seen: timestamp,
-    }, { merge: true });
-
-    // 2. Kanal toplam sayacını güncelle
-    const channelRef = db.collection('channels').doc(msg.channel);
-    batch.set(channelRef, {
-      total_messages: FieldValue.increment(1),
-      last_activity: timestamp,
-      slug: msg.channel
-    }, { merge: true });
-
-    await batch.commit();
-
-    // 3. Ban Bot Tetikleyici
-    // Bot kendi kanalımızdan gelen mesajları banlamamalı
+    // 2. Ban Bot Tetikleyici (Bu işlem veritabanı okumaz, RAM Cache'den bakar ve realtime kalır)
     if (msg.channel !== MY_CHANNEL && msg.username !== 'unknown') {
       await banUserOnKick(msg.user_id, msg.username, msg.channel);
     }
@@ -336,7 +380,19 @@ function listenChannel({ slug, chatroomId }) {
 
 async function main() {
   console.log('Bot başlatılıyor...');
-  startHeartbeat();
+  
+  // Önbelleği yükle: Daha önce banlanmış kişilerin ID'lerini RAM'e al (Gereksiz read faturasını engeller)
+  console.log('[Cache] Mevcut yasaklılar belleğe yükleniyor...');
+  try {
+    const snapshot = await db.collection('banned_users').get();
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.user_id) bannedUsersCache.add(data.user_id.toString());
+    });
+    console.log(`[Cache] Başarıyla ${bannedUsersCache.size} yasaklı kullanıcı belleğe alındı.`);
+  } catch (err) {
+    console.error('[Cache] Yükleme hatası:', err.message);
+  }
 
   console.log('[Config] bot_config/channels dökümanı dinleniyor...');
   db.collection('bot_config').doc('channels').onSnapshot((doc) => {

@@ -14,5 +14,12 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    match /banned_users/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /bot_config/commands {
+      allow read, write: if true;
+    }
   }
 }

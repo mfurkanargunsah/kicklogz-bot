@@ -279,7 +279,7 @@
       <p style="color: var(--muted); font-size: 0.8rem; margin-bottom: 1.5rem;">Hedef kanallarda yakalanıp otomatik banlananlar.</p>
       
       <h2>Yasaklı Ara</h2>
-      <input type="text" id="ban-search-input" placeholder="kullanıcı adı..." oninput="filterBans(this.value)">
+      <input type="text" id="ban-search-input" placeholder="aranacak kelime (tam veya baş tarafı)..." oninput="handleBanSearch()">
       
       <div id="bans-list">
         <div class="empty">Henüz yasaklanan kimse yok.</div>
@@ -304,7 +304,7 @@
 
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-    import { getFirestore, collection, doc, onSnapshot, orderBy, query, limit, setDoc } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+    import { getFirestore, collection, doc, onSnapshot, orderBy, query, limit, setDoc, getDocs, getCountFromServer, where } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
 
     // ── Firebase config buraya ────────────────────────────
     const firebaseConfig = {
@@ -322,23 +322,17 @@
     const db = getFirestore(app);
 
     let chattersUnsubscribe = null;
+    let refreshInterval = null;
+    let currentChannelSlug = null;
+    let searchTimeout = null;
     let allChatters = [];
     let allBans = [];
 
-    // Kanalları realtime dinle
+    // Kanalları realtime dinle (Az veri olduğu için bu kalabilir)
     onSnapshot(collection(db, 'channels'), (snapshot) => {
       const channels = [];
       snapshot.forEach(d => channels.push({ id: d.id, ...d.data() }));
       renderChannels(channels);
-    });
-
-    // Yasaklıları realtime dinle (son 200 kişiyi çekip Client'ta filtrelemek için limit(200))
-    onSnapshot(query(collection(db, 'banned_users'), orderBy('timestamp', 'desc'), limit(200)), (snapshot) => {
-      allBans = [];
-      snapshot.forEach(d => allBans.push(d.data()));
-      document.getElementById('ban-count-badge').textContent = snapshot.size;
-      const searchBox = document.getElementById('ban-search-input');
-      filterBans(searchBox ? searchBox.value : '');
     });
 
     function renderChannels(channels) {
@@ -373,41 +367,104 @@
       `).join('');
     }
 
-    window.showBanHub = function() {
+    window.showBanHub = async function() {
         document.getElementById('home-view').style.display = 'none';
         document.getElementById('channel-view').style.display = 'none';
         document.getElementById('ban-view').style.display = 'block';
         document.getElementById('live-badge').style.display = 'none';
         
-        // Yeniden render et (son verileri çekmek için)
-        // Not: snapshot zaten güncel tutuyor.
+        if (refreshInterval) clearInterval(refreshInterval);
+        
+        await loadBans();
+        
+        // 10 dakikada bir (600000ms) otomatik yenileme ile kota tasarrufu
+        refreshInterval = setInterval(loadBans, 600000);
     };
 
-    window.showChannel = function (slug) {
+    async function loadBans() {
+      // 1. Toplam sayıyı gerçek veritabanından çek (okuma kotası yemez)
+      const countSnap = await getCountFromServer(collection(db, 'banned_users'));
+      document.getElementById('ban-count-badge').textContent = countSnap.data().count.toLocaleString('tr');
+
+      // 2. Arama kutusuna göre sorgu oluştur
+      const searchVal = document.getElementById('ban-search-input').value.trim();
+      let q;
+      
+      if (searchVal) {
+        // Büyük harf/küçük harf duyarlı, sunucu tarafı ön ek araması (StartsWith)
+        q = query(
+          collection(db, 'banned_users'),
+          where('username', '>=', searchVal),
+          where('username', '<=', searchVal + '\uf8ff'),
+          limit(200)
+        );
+      } else {
+        q = query(
+          collection(db, 'banned_users'),
+          orderBy('timestamp', 'desc'),
+          limit(200)
+        );
+      }
+
+      const snap = await getDocs(q);
+      allBans = [];
+      snap.forEach(d => allBans.push(d.data()));
+      renderBans(allBans);
+    }
+
+    window.handleBanSearch = function() {
+      if (searchTimeout) clearTimeout(searchTimeout);
+      // Sunucuya sürekli istek gitmesini önlemek (debounce) için yarım saniye gecikme
+      searchTimeout = setTimeout(() => {
+        loadBans();
+      }, 500); 
+    };
+
+    window.showChannel = async function (slug) {
       document.getElementById('home-view').style.display = 'none';
       document.getElementById('channel-view').style.display = 'block';
       document.getElementById('ban-view').style.display = 'none';
       document.getElementById('live-badge').style.display = 'block';
 
-      // Toplam mesaj sayacını kaldırdık
+      if (refreshInterval) clearInterval(refreshInterval);
+      if (chattersUnsubscribe) {
+        chattersUnsubscribe(); // eski realtime varsa temizle
+        chattersUnsubscribe = null;
+      }
+      
+      currentChannelSlug = slug;
+      await loadChatters();
+      
+      // 10 dakikada bir otomatik yenileme
+      refreshInterval = setInterval(loadChatters, 600000);
+    };
 
-      // Chatters realtime
-      if (chattersUnsubscribe) chattersUnsubscribe();
+    async function loadChatters() {
+      if (!currentChannelSlug) return;
+      const slug = currentChannelSlug;
+      
+      // Toplam chatters sayısını count() ile sunucudan çek
+      const countSnap = await getCountFromServer(collection(db, 'channels', slug, 'chatters'));
+      document.getElementById('stat-unique').textContent = countSnap.data().count.toLocaleString('tr');
+
       const q = query(
         collection(db, 'channels', slug, 'chatters'),
         orderBy('message_count', 'desc'),
         limit(50)
       );
-      chattersUnsubscribe = onSnapshot(q, (snapshot) => {
-        allChatters = [];
-        snapshot.forEach(d => allChatters.push(d.data()));
-        document.getElementById('stat-unique').textContent = allChatters.length.toLocaleString('tr');
-        renderChatters(allChatters);
-      });
-    };
+      
+      const snap = await getDocs(q);
+      allChatters = [];
+      snap.forEach(d => allChatters.push(d.data()));
+      
+      const searchBox = document.getElementById('search-input');
+      filterChatters(searchBox ? searchBox.value : '');
+    }
 
     window.showHome = function () {
       if (chattersUnsubscribe) chattersUnsubscribe();
+      if (refreshInterval) clearInterval(refreshInterval);
+      
       document.getElementById('home-view').style.display = 'block';
       document.getElementById('channel-view').style.display = 'none';
       document.getElementById('ban-view').style.display = 'none';
@@ -421,12 +478,8 @@
       renderChatters(filtered);
     };
 
-    window.filterBans = function (val) {
-      const filtered = val
-        ? allBans.filter(b => b.username.toLowerCase().includes(val.toLowerCase()))
-        : allBans;
-      renderBans(filtered);
-    };
+    // filterBans yerine handleBanSearch ile sunucudan arama yapıyoruz, 
+    // yerel filterBans'ı kaldırdık.
 
     function renderChatters(chatters) {
       if (chatters.length === 0) return;
