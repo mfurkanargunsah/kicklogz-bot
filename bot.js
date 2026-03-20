@@ -7,6 +7,7 @@ const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 let activeConnections = new Map(); // chatroomId (string) -> WebSocket
 
 let MY_CHANNEL = 'unknown'; // Yasakların uygulanacağı kendi kanalın
+let MY_WHITELIST = []; // Banlanmayacak kişilerin listesi
 // ─────────────────────────────────────────────────────────
 
 // Firebase başlat
@@ -75,37 +76,30 @@ async function getKickAccessToken() {
     params.append('client_secret', clientSecret);
     params.append('refresh_token', data.refresh_token);
 
-    const response = await axios.post('https://id.kick.com/oauth/token', params, {
+    const refreshResponse = await axios.post('https://id.kick.com/oauth/token', params, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    const { access_token, refresh_token, expires_in } = response.data;
-    const expires_at = Date.now() + (expires_in * 1000);
+    const newAccessToken = refreshResponse.data.access_token;
+    const newRefreshToken = refreshResponse.data.refresh_token;
+    const expiresIn = refreshResponse.data.expires_in; // genelde 7200 saniye (2 saat)
 
-    // Yeni tokenları Firestore'a kaydet (Kick refresh_token'ı her seferinde döndürebilir)
     await tokenDocRef.update({
-      access_token,
-      refresh_token: refresh_token || data.refresh_token,
-      expires_at,
-      updated_at: Date.now()
+      access_token: newAccessToken,
+      refresh_token: newRefreshToken,
+      expires_at: Date.now() + (expiresIn * 1000)
     });
 
-    console.log('[Kick API] Token başarıyla yenilendi ve Firestore güncellendi.');
-    return access_token;
+    console.log('[Kick API] Access Token başarıyla yenilendi ve kaydedildi.');
+    return newAccessToken;
 
   } catch (error) {
-    console.error('[Kick API] Token yönetim hatası:', error.response?.data || error.message);
+    console.error('[Kick API] Token yenileme hatası:', error.response?.data || error.message);
     return null;
   }
 }
 
 async function banUserOnKick(userId, username, targetChannel) {
-  const token = await getKickAccessToken();
-  if (!token) {
-    console.warn(`[Kick API] ${username} banlanamadı: Token bulunamadı.`);
-    return;
-  }
-
   if (!MY_CHANNEL_ID) {
     if (MY_CHANNEL !== 'unknown') {
       console.log(`[Kick API] ${MY_CHANNEL} için ID aranıyor...`);
@@ -117,28 +111,53 @@ async function banUserOnKick(userId, username, targetChannel) {
     }
   }
 
-  const banBody = {
-    broadcaster_user_id: parseInt(MY_CHANNEL_ID),
-    user_id: parseInt(userId),
-    reason: `Otomatik Ban: ${targetChannel} kanalında görüldü.`
-  };
+  // Whitelist kontrolü
+  if (MY_WHITELIST.includes(username.toLowerCase())) {
+    console.log(`[Kick API] ${username} whitelist'te olduğu için banlanmadı.`);
+    return;
+  }
 
-  console.log(`[Kick API] Ban İsteği Gönderiliyor:`, JSON.stringify(banBody));
-  // console.log(`[Kick API] Token (İlk 15 karakter): ${token.substring(0, 15)}...`);
+  // Zaten banlandı mı kontrolü
+  try {
+    const bannedDoc = await db.collection('banned_users').where('user_id', '==', userId).get();
+    if (!bannedDoc.empty) {
+      console.log(`[Kick API] ${username} (${userId}) zaten banlı olarak işaretlenmiş.`);
+      return; // Zaten banlı
+    }
+  } catch (err) {
+    console.error(`[Kick API] Veritabanı okuma hatası (${username}):`, err.message);
+  }
+
+  const token = await getKickAccessToken();
+  if (!token) {
+    console.error('[Kick API] Geçerli bir access token alınamadığı için ban atılamadı.');
+    return;
+  }
 
   try {
-    // API dökümanına göre doğru endpoint ve gövde
-    await axios.post('https://api.kick.com/public/v1/moderation/bans', banBody, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
-    });
+    const banBody = {
+      broadcaster_user_id: parseInt(MY_CHANNEL_ID),
+      user_id: parseInt(userId),
+      reason: `Otomatik Ban: ${targetChannel} kanalında görüldü.`
+    };
 
-    console.log(`[Kick API] ${username} (${userId}) başarıyla banlandı.`);
-    
-    // Firestore'a ban kaydı ekle
+    console.log(`[Kick API] Ban İsteği Gönderiliyor: ${JSON.stringify(banBody)}`);
+
+    const response = await axios.post(
+      `https://api.kick.com/public/v1/moderation/bans`,
+      banBody,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    console.log(`[Kick API] ${username} başarıyla banlandı! (${targetChannel} kanalında görüldü)`);
+
+    // Başarılı ban bilgisini veritabanına kaydet
     await db.collection('banned_users').add({
       username: username,
       user_id: userId,
@@ -149,14 +168,46 @@ async function banUserOnKick(userId, username, targetChannel) {
     });
 
   } catch (error) {
-    // 409: Zaten banlı olabilir
-    if (error.response?.status === 409) return;
-    
     console.error(`[Kick API] ${username} banlanırken hata:`, error.response?.data || error.message);
   }
 }
 
 // ─────────────────────────────────────────────────────────
+
+// Geriye Dönük Banlama Fonksiyonu
+async function runRetroBan() {
+  try {
+    const channelsSnapshot = await db.collection('channels').get();
+    const usersToBan = [];
+
+    for (const channelDoc of channelsSnapshot.docs) {
+      const chattersSnapshot = await channelDoc.ref.collection('chatters').get();
+      chattersSnapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.user_id && data.username && data.username !== 'unknown') {
+           usersToBan.push({
+             userId: data.user_id,
+             username: data.username,
+             channel: channelDoc.id
+           });
+        }
+      });
+    }
+
+    console.log(`[Retro Ban] Toplam ${usersToBan.length} kullanıcı bulundu. Banlama başlıyor...`);
+    for (const user of usersToBan) {
+      // Sadece izlenen yasadışı kanallardaki kişileri kendi kanalımızda banlamak istiyoruz.
+      // Kendi kanalımızın chatters listesini filtreleyelim:
+      if (user.channel !== MY_CHANNEL && user.channel !== 'unknown') {
+        await banUserOnKick(user.userId, user.username, user.channel);
+        await new Promise(r => setTimeout(r, 600)); // Kick API rate limit koruması
+      }
+    }
+    console.log('[Retro Ban] İşlem tamamlandı!');
+  } catch (err) {
+    console.error('[Retro Ban] Hata:', err.message);
+  }
+}
 
 // Yardımcı fonksiyon: Objede case-insensitive ve trimli key arama
 const findKey = (obj, target) => {
@@ -187,14 +238,7 @@ async function saveMessage(msg) {
     const batch = db.batch();
     const timestamp = FieldValue.serverTimestamp();
 
-    // 1. Mesajı kaydet
-    const msgRef = db.collection('messages').doc();
-    batch.set(msgRef, {
-      ...msg,
-      created_at: timestamp,
-    });
-
-    // 2. Kullanıcı istatistiğini güncelle
+    // 1. Kullanıcı istatistiğini güncelle (Mesajı doğrudan kaydetmiyoruz)
     const userRef = db
       .collection('channels').doc(msg.channel)
       .collection('chatters').doc(msg.user_id);
@@ -206,7 +250,7 @@ async function saveMessage(msg) {
       last_seen: timestamp,
     }, { merge: true });
 
-    // 3. Kanal toplam sayacını güncelle
+    // 2. Kanal toplam sayacını güncelle
     const channelRef = db.collection('channels').doc(msg.channel);
     batch.set(channelRef, {
       total_messages: FieldValue.increment(1),
@@ -216,14 +260,14 @@ async function saveMessage(msg) {
 
     await batch.commit();
 
-    // 4. Ban Bot Tetikleyici
+    // 3. Ban Bot Tetikleyici
     // Bot kendi kanalımızdan gelen mesajları banlamamalı
     if (msg.channel !== MY_CHANNEL && msg.username !== 'unknown') {
       await banUserOnKick(msg.user_id, msg.username, msg.channel);
     }
 
   } catch (error) {
-    console.error(`[${msg.channel}] Mesaj işleme hatası:`, error.message);
+    console.error(`[${msg.channel}] Kullanıcı istatistiği işleme hatası:`, error.message);
   }
 }
 
@@ -305,6 +349,11 @@ async function main() {
     
     // Moderatör ayarlarını güncelle
     const modSetting = data.moderator_settings || data.moderator_setting || {};
+    
+    // Whitelist'i belleğe al
+    const whitelist = modSetting.whitelist || [];
+    MY_WHITELIST = Array.isArray(whitelist) ? whitelist.map(x => String(x).toLowerCase()) : [];
+    
     console.log('[Config] Moderatör Ayarları:', JSON.stringify(modSetting));
     
     if (modSetting.slug && modSetting.slug !== MY_CHANNEL) {
@@ -352,6 +401,20 @@ async function main() {
     });
   }, (err) => {
     console.error('[Config] İzleme hatası:', err.message);
+  });
+
+  console.log('[Config] bot_config/commands dökümanı dinleniyor...');
+  db.collection('bot_config').doc('commands').onSnapshot(async (doc) => {
+    if (!doc.exists) return;
+    const data = doc.data();
+    if (data.retro_ban === true) {
+      console.log('[Commands] Retro Ban komutu alındı!');
+      // Komutu sıfırla ki tekrar tekrar çalışmasın
+      await doc.ref.update({ retro_ban: false });
+      await runRetroBan();
+    }
+  }, (err) => {
+    console.error('[Commands] İzleme hatası:', err.message);
   });
 }
 

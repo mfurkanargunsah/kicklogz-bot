@@ -264,7 +264,6 @@
         <span class="back" style="margin-bottom: 0" onclick="showHome()">Kanallar</span>
         <span class="back" style="margin-bottom: 0" onclick="showBanHub()">Ban Merkezi</span>
     </div>
-    <span id="bot-status" class="status-badge offline">BOT OFFLINE</span>
     <span id="live-badge" class="live-badge" style="display:none">● LIVE</span>
   </header>
   <main>
@@ -276,8 +275,13 @@
     </div>
 
     <div id="ban-view" style="display: none;">
-      <h2>Ban Merkezi <span id="ban-count-badge" class="live-badge" style="background: #ff4444; color: white;">0</span></h2>
-      <p style="color: var(--muted); font-size: 0.8rem; margin-bottom: 1.5rem;">Hedef kanallarda yakalanıp otomatik banlananlar.</p>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <div>
+          <h2>Ban Merkezi <span id="ban-count-badge" class="live-badge" style="background: #ff4444; color: white;">0</span></h2>
+          <p style="color: var(--muted); font-size: 0.8rem;">Hedef kanallarda yakalanıp otomatik banlananlar.</p>
+        </div>
+        <button onclick="retroBan()" style="background: #ff4444; color: white; padding: 0.6rem 1.2rem; border: none; cursor: pointer; font-family: 'Space Mono', monospace; font-weight: bold; font-size: 0.8rem;">🚨 Geriye Dönük Banla (Retro Ban)</button>
+      </div>
       
       <div id="bans-list">
         <div class="empty">Henüz yasaklanan kimse yok.</div>
@@ -306,7 +310,7 @@
 
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-    import { getFirestore, collection, doc, onSnapshot, orderBy, query, limit } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+    import { getFirestore, collection, doc, onSnapshot, orderBy, query, limit, setDoc } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
 
     // ── Firebase config buraya ────────────────────────────
     const firebaseConfig = {
@@ -326,31 +330,6 @@
     let chattersUnsubscribe = null;
     let bansUnsubscribe = null;
     let allChatters = [];
-
-    // Bot durumunu izle (Heartbeat)
-    onSnapshot(doc(db, 'bot_status', 'main'), (snap) => {
-      const el = document.getElementById('bot-status');
-      if (!snap.exists()) {
-        el.textContent = 'BOT OFFLINE';
-        el.className = 'status-badge offline';
-        return;
-      }
-      
-      const data = snap.data();
-      const lastHeartbeat = data.last_heartbeat?.toDate();
-      const now = new Date();
-      
-      // 120 saniyeden eskiyse offline say (saat farkları için tolerans)
-      if (lastHeartbeat && (now - lastHeartbeat) < 120000) {
-        el.textContent = `BOT ONLINE (${data.active_channels || 0} Kanal)`;
-        el.className = 'status-badge';
-        console.log("[Bot] Alive:", lastHeartbeat, "Delta:", Math.round((now - lastHeartbeat)/1000) + "s");
-      } else {
-        el.textContent = 'BOT OFFLINE';
-        el.className = 'status-badge offline';
-        console.log("[Bot] Dead or Late:", lastHeartbeat);
-      }
-    });
 
     // Kanalları realtime dinle
     onSnapshot(collection(db, 'channels'), (snapshot) => {
@@ -467,6 +446,17 @@
       </div>
     `).join('');
     }
+
+    window.retroBan = async function() {
+      if (confirm('DİKKAT! Başka kanallarda görülen fakat henüz banlanmamış TÜM GEÇMİŞ KULLANICILAR (whitelist harici) yavaşça sırayla banlanacak. Bu işlem oldukça uzun sürebilir. Başlatmak istediğine emin misin?')) {
+        try {
+          await setDoc(doc(db, 'bot_config', 'commands'), { retro_ban: true }, { merge: true });
+          alert("Geriye dönük banlama komutu Firebase'e gönderildi! Bot arka planda çalışmaya başlayacaktır.");
+        } catch(err) {
+          alert('Hata: ' + err.message);
+        }
+      }
+    };
   </script>
 </body>
 
