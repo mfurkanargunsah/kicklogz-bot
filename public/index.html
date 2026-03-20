@@ -292,12 +292,8 @@
       <span class="back" onclick="showHome()">← Geri</span>
       <div class="stats">
         <div class="stat-card">
-          <div class="stat-val" id="stat-total">0</div>
-          <div class="stat-label">Toplam Mesaj</div>
-        </div>
-        <div class="stat-card">
           <div class="stat-val" id="stat-unique">0</div>
-          <div class="stat-label">Farklı Kullanıcı</div>
+          <div class="stat-label">Toplam Aktif Kullanıcı</div>
         </div>
       </div>
       <h2>Kullanıcı Ara</h2>
@@ -343,9 +339,7 @@
       const bans = [];
       snapshot.forEach(d => bans.push(d.data()));
       document.getElementById('ban-count-badge').textContent = snapshot.size;
-      if (document.getElementById('ban-view').style.display === 'block') {
-        renderBans(bans);
-      }
+      renderBans(bans);
     });
 
     function renderChannels(channels) {
@@ -357,7 +351,7 @@
       el.innerHTML = channels.map(c => `
       <div class="channel-card" onclick="window.showChannel('${c.id}')">
         <div class="channel-name">${c.id}</div>
-        <div class="channel-meta">${(c.total_messages || 0).toLocaleString('tr')} mesaj</div>
+        <div class="channel-meta">İzleniyor</div>
         <span class="arrow">→</span>
       </div>
     `).join('');
@@ -396,11 +390,7 @@
       document.getElementById('ban-view').style.display = 'none';
       document.getElementById('live-badge').style.display = 'block';
 
-      // Toplam mesaj sayacı
-      onSnapshot(doc(db, 'channels', slug), (snap) => {
-        const data = snap.data() || {};
-        document.getElementById('stat-total').textContent = (data.total_messages || 0).toLocaleString('tr');
-      });
+      // Toplam mesaj sayacını kaldırdık
 
       // Chatters realtime
       if (chattersUnsubscribe) chattersUnsubscribe();
