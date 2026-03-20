@@ -322,6 +322,7 @@
     const db = getFirestore(app);
 
     let chattersUnsubscribe = null;
+    let allChatters = [];
     let allBans = [];
 
     // Kanalları realtime dinle
