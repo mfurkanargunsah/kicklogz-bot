@@ -351,6 +351,7 @@ async function main() {
     const modSetting = data.moderator_settings || data.moderator_setting || {};
     
     // Whitelist'i belleğe al
+    const whitelist = modSetting.whitelist || [];
     MY_WHITELIST = Array.isArray(whitelist) ? whitelist.map(x => String(x).toLowerCase().trim()) : [];
     
     console.log('[Config] Moderatör Ayarları:', JSON.stringify(modSetting));
